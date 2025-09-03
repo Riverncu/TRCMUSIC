@@ -299,13 +299,24 @@ async def play(interaction: discord.Interaction, query: str):
         await voice_client.move_to(voice_channel)
 
     ydl_options = {
-        "format": "bestaudio/best",  # Chọn định dạng tốt nhất
-        "noplaylist": False,
-        "default_search": "ytsearch",  # Tìm kiếm YouTube
-        "quiet": True,
-        "no_warnings": True,
-        # "proxy": "http://your_proxy_server:port",  # Thêm proxy nếu cần
-    }
+    "format": "bestaudio/best",
+    "noplaylist": False,
+    "default_search": "ytsearch",
+    "quiet": True,
+    "no_warnings": True,
+    # THÊM CÁC THAM SỐ MỚI ĐỂ TRÁNH BỊ CHẶN
+    "extractor_args": {
+        "youtube": {
+            "skip": ["dash", "hls"],  # Bỏ qua định dạng bị chặn
+            "player_client": ["android", "web"],  # Giả lập thiết bị
+        }
+    },
+    "force_ipv4": True,  # Ưu tiên IPv4
+    "no_check_certificate": True,  # Bỏ qua kiểm tra SSL
+    "geo_bypass": True,  # Bypass geo-restriction
+    "geo_bypass_country": "US",  # Giả lập location
+    "throttled_rate": "100K",  # Giới hạn tốc độ tải
+}
 
     try:
         start_time = time.time()
@@ -474,4 +485,5 @@ async def play_next_song(voice_client, guild_id, channel):
 # Run the bot
 
 bot.run(TOKEN)
+
 
