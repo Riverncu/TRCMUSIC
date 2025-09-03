@@ -432,7 +432,7 @@ async def play_next_song(voice_client, guild_id, channel):
     }
 
     try:
-        source = discord.FFmpegOpusAudio(audio_url, **ffmpeg_options, executable="bin\\ffmpeg\\ffmpeg.exe")
+        source = discord.FFmpegOpusAudio(audio_url, **ffmpeg_options")
     except Exception as e:
         logging.error(f"FFmpeg failed to create source for {title} (URL: {audio_url}): {str(e)}")
         await channel.send(embed=discord.Embed(
@@ -472,4 +472,5 @@ async def play_next_song(voice_client, guild_id, channel):
         asyncio.run_coroutine_threadsafe(play_next_song(voice_client, guild_id, channel), bot.loop)
 
 # Run the bot
+
 bot.run(TOKEN)
