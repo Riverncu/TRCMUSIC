@@ -301,20 +301,24 @@ async def play(interaction: discord.Interaction, query: str):
 
     # CẤU HÌNH YT-DLP ĐÃ SỬA
     ydl_options = {
-        "format": "bestaudio/best",
-        "noplaylist": False,
-        "default_search": "ytsearch",
-        "quiet": True,
-        "no_warnings": True,
-        "extractor_args": {
-            "youtube": {
-                "skip": ["dash", "hls"],
-                "player_client": ["android", "web"],
-            }
-        },
-        "force_ipv4": True,
-        "no_check_certificate": True,
-    }
+    "format": "bestaudio/best",
+    "noplaylist": False,
+    "default_search": "ytsearch",
+    "quiet": True,
+    "no_warnings": True,
+    "socket_timeout": 3,
+    "retries": 3,
+    "source_address": "0.0.0.0",
+    "cookiefile": "cookies.txt",  # Thêm dòng này
+    "extractor_args": {
+        "youtube": {
+            "skip": ["dash", "hls"],
+            "player_client": ["android", "web"],
+        }
+    },
+    "force_ipv4": True,
+    "no_check_certificate": True,
+}
 
     try:
         results = await search_ytdlp_async(query, ydl_opts=ydl_options)
@@ -477,6 +481,7 @@ async def play_next_song(voice_client, guild_id, channel):
 # Run the bot
 
 bot.run(TOKEN)
+
 
 
 
