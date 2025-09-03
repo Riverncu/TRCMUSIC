@@ -432,7 +432,7 @@ async def play_next_song(voice_client, guild_id, channel):
     }
 
     try:
-        source = discord.FFmpegOpusAudio(audio_url, **ffmpeg_options")
+        source = discord.FFmpegOpusAudio(audio_url, **ffmpeg_options)
     except Exception as e:
         logging.error(f"FFmpeg failed to create source for {title} (URL: {audio_url}): {str(e)}")
         await channel.send(embed=discord.Embed(
@@ -474,3 +474,4 @@ async def play_next_song(voice_client, guild_id, channel):
 # Run the bot
 
 bot.run(TOKEN)
+
