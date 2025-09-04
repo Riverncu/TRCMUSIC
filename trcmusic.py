@@ -53,37 +53,6 @@ async def on_ready():
     await bot.tree.sync(guild=guild)
     logging.info(f"{bot.user} is online!")
 
-@bot.event
-async def on_disconnect():
-    """Dọn dẹp process khi bot disconnect"""
-    logging.info("Cleaning up FFmpeg processes...")
-    
-    # Dọn dẹp các biến global để tránh memory leak
-    SONG_QUEUES.clear()
-    LOOP_STATES.clear()
-    CURRENT_SONG.clear()
-    
-    # Thêm cleanup process nếu cần
-    for guild_id in list(SONG_QUEUES.keys()):
-        try:
-            # Disconnect khỏi tất cả voice channels
-            for guild in bot.guilds:
-                voice_client = guild.voice_client
-                if voice_client and voice_client.is_connected():
-                    await voice_client.disconnect()
-        except Exception as e:
-            logging.error(f"Error cleaning up guild {guild_id}: {e}")
-
-@bot.event
-async def on_error(event, *args, **kwargs):
-    """Xử lý lỗi tổng thể - chỉ log lại, không crash bot"""
-    logging.error(f"Error in event {event}: {args} {kwargs}")
-    
-    # Xử lý các lỗi cụ thể
-    if "403" in str(args) or "403" in str(kwargs):
-        logging.warning("YouTube 403 error detected - ignoring")
-        return  # Bỏ qua lỗi 403
-
 @bot.tree.command(name="queue", description="Show the current song queue")
 async def queue(interaction: discord.Interaction):
     guild_id = str(interaction.guild_id)
@@ -309,15 +278,13 @@ async def stop(interaction: discord.Interaction):
         color=discord.Color.green()
     ))
 
-
 @bot.tree.command(name="play", description="Play a song or playlist or add it to the queue")
 @app_commands.describe(query="Song name, YouTube URL, or playlist URL")
 async def play(interaction: discord.Interaction, query: str):
     # Phản hồi ngay để tránh timeout
-    await interaction.response.defer(thinking=True)
-    
-    # Kiểm tra voice channel
-    if not interaction.user.voice or not interaction.user.voice.channel:
+    await interaction.response.send_message("🔄 Đang xử lý...", ephemeral=True)
+
+    if interaction.user.voice is None:
         await interaction.followup.send(embed=discord.Embed(
             title="Error", 
             description="You must be in a voice channel to use this command.", 
@@ -327,75 +294,48 @@ async def play(interaction: discord.Interaction, query: str):
 
     voice_channel = interaction.user.voice.channel
     voice_client = interaction.guild.voice_client
-    
-    try:
-        if voice_client is None:
-            voice_client = await voice_channel.connect()
-        elif voice_channel != voice_client.channel:
-            await voice_client.move_to(voice_channel)
-    except Exception as e:
-        await interaction.followup.send(embed=discord.Embed(
-            title="Error", 
-            description=f"Failed to connect to voice channel: {str(e)}", 
-            color=discord.Color.red()
-        ))
-        return
+    if voice_client is None:
+        voice_client = await voice_channel.connect()
+    elif voice_channel != voice_client.channel:
+        await voice_client.move_to(voice_channel)
 
-    # Gửi thông báo "Đang tìm kiếm"
-    processing_msg = await interaction.followup.send(embed=discord.Embed(
-        title="🔍 Searching...",
-        description="Please wait while I search for your song",
-        color=discord.Color.blue()
-    ))
-
-    # Tối ưu ydl_options
     ydl_options = {
         "format": "bestaudio/best",
-        "extract_flat": False,
         "noplaylist": False,
-        "default_search": "ytsearch1",
+        "default_search": "ytsearch",
         "quiet": True,
         "no_warnings": True,
-        "socket_timeout": 1,
-        "retries": 2,
-        "cookiefile": "cookies.txt",
+        "socket_timeout": 3,
+        "retries": 3,
+        "source_address": "0.0.0.0",
+        "cookiefile": "cookies.txt",  # Thêm cookies
         "extractor_args": {
             "youtube": {
-                "player_client": ["android"],
-                "max_results": 1,
+                "skip": ["dash", "hls"],
+                "player_client": ["android", "web"],
             }
         },
         "force_ipv4": True,
-        "http_headers": {
-            "User-Agent": "Mozilla/5.0 (Android 13; Mobile; rv:68.0) Gecko/68.0 Firefox/120.0",
-            "Accept": "*/*",
-            "Referer": "https://www.youtube.com/",
-        },
-        "max_downloads": 3,
-        "playlistend": 5,
-        "cachedir": False,
+        "no_check_certificate": True,
     }
 
-    # Search với timeout
     try:
         start_time = time.time()
-        with yt_dlp.YoutubeDL(ydl_options) as ydl:
-            results = await bot.loop.run_in_executor(None, lambda: ydl.extract_info(query, download=False))
+        results = await search_ytdlp_async(query, ydl_opts=ydl_options)
         logging.info(f"Search time for query '{query}': {time.time() - start_time:.2f}s")
+        tracks = results.get("entries", []) if results.get("entries") else [results]
     except Exception as e:
         logging.error(f"Failed to fetch song for query '{query}': {str(e)}")
-        await processing_msg.edit(embed=discord.Embed(
+        await interaction.followup.send(embed=discord.Embed(
             title="Error", 
             description=f"Failed to fetch song: {str(e)}", 
             color=discord.Color.red()
         ))
         return
 
-    # Xử lý kết quả
-    tracks = results.get("entries", []) if results.get("entries") else [results]
-    
+    # Phần còn lại giữ nguyên
     if not tracks:
-        await processing_msg.edit(embed=discord.Embed(
+        await interaction.followup.send(embed=discord.Embed(
             title="Error", 
             description="No results found.", 
             color=discord.Color.red()
@@ -407,62 +347,41 @@ async def play(interaction: discord.Interaction, query: str):
         SONG_QUEUES[guild_id] = deque()
 
     added_songs = []
-    BATCH_SIZE = 3
-    
     for track in tracks:
-        if not track:
-            continue
-            
-        audio_url = track.get("url") or track.get("webpage_url")
+        audio_url = track.get("url", "")
         if not audio_url:
-            logging.warning(f"No valid URL for track {track.get('title', 'Unknown')}")
             continue
-            
         title = track.get("title", "Untitled")
         duration = track.get("duration", 0)
-        
         SONG_QUEUES[guild_id].append((audio_url, title, duration, interaction.user.name))
         added_songs.append(title)
-        
-        # Update progress định kỳ
-        if len(added_songs) % BATCH_SIZE == 0 and len(added_songs) < 5:
-            try:
-                await processing_msg.edit(embed=discord.Embed(
-                    title="📥 Processing...",
-                    description=f"Added {len(added_songs)} songs so far",
-                    color=discord.Color.blue()
-                ))
-            except:
-                pass
 
     if not added_songs:
-        await processing_msg.edit(embed=discord.Embed(
+        await interaction.followup.send(embed=discord.Embed(
             title="Error", 
             description="No valid songs could be added.", 
             color=discord.Color.red()
         ))
         return
 
-    # Gửi kết quả cuối
     if len(added_songs) == 1:
         message = f"✅ Added to queue: **{added_songs[0]}**"
     else:
         message = f"✅ Added {len(added_songs)} songs to queue."
 
     if voice_client.is_playing() or voice_client.is_paused():
-        await processing_msg.edit(embed=discord.Embed(
+        await interaction.followup.send(embed=discord.Embed(
             title="Success", 
             description=message, 
             color=discord.Color.green()
         ))
     else:
-        await processing_msg.edit(embed=discord.Embed(
+        await interaction.followup.send(embed=discord.Embed(
             title="Now Playing", 
             description=f"🎵 Now playing: **{added_songs[0]}**", 
             color=discord.Color.green()
         ))
-        asyncio.create_task(play_next_song(voice_client, guild_id, interaction.channel))
-
+        await play_next_song(voice_client, guild_id, interaction.channel)
 
 async def play_next_song(voice_client, guild_id, channel):
     if not voice_client.is_connected():
@@ -482,7 +401,13 @@ async def play_next_song(voice_client, guild_id, channel):
         return
 
     try:
-        audio_url, title, duration, requester = SONG_QUEUES[guild_id].popleft()
+        song = SONG_QUEUES[guild_id].popleft()
+        if len(song) == 2:  # Xử lý tuple cũ
+            audio_url, title = song
+            duration = 0
+            requester = "Unknown"
+        else:  # Tuple 4 giá trị
+            audio_url, title, duration, requester = song
         index = len(SONG_QUEUES[guild_id]) + 1
     except ValueError as e:
         logging.error(f"Error unpacking queue item in guild {guild_id}: {e}")
@@ -512,12 +437,12 @@ async def play_next_song(voice_client, guild_id, channel):
         SONG_QUEUES[guild_id].append((audio_url, title, duration, requester))
 
     ffmpeg_options = {
-        "before_options": "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 -nostdin",
-        "options": "-vn -c:a libopus -b:a 96k",
+        "before_options": "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 10 -timeout 10000000",
+        "options": "-vn -c:a libopus -b:a 96k -bufsize 96k",
     }
 
     try:
-        source = discord.FFmpegOpusAudio(audio_url, **ffmpeg_options, executable="/usr/bin/ffmpeg")
+        source = discord.FFmpegOpusAudio(audio_url, **ffmpeg_options)
     except Exception as e:
         logging.error(f"FFmpeg failed to create source for {title} (URL: {audio_url}): {str(e)}")
         await channel.send(embed=discord.Embed(
@@ -525,28 +450,28 @@ async def play_next_song(voice_client, guild_id, channel):
             description=f"Failed to play {title}: Invalid or inaccessible URL.",
             color=discord.Color.red()
         ))
-        asyncio.create_task(play_next_song(voice_client, guild_id, channel))
+        asyncio.run_coroutine_threadsafe(play_next_song(voice_client, guild_id, channel), bot.loop)
         return
 
     def after_play(error):
         if error:
             logging.error(f"Playback error for {title} (URL: {audio_url}): {str(error)}")
-            asyncio.create_task(channel.send(embed=discord.Embed(
+            asyncio.run_coroutine_threadsafe(channel.send(embed=discord.Embed(
                 title="Error",
                 description=f"Playback failed for {title}: {str(error)}",
                 color=discord.Color.red()
-            )))
+            )), bot.loop)
         else:
             logging.info(f"Finished playing {title} for guild {guild_id}")
-        asyncio.create_task(play_next_song(voice_client, guild_id, channel))
+        asyncio.run_coroutine_threadsafe(play_next_song(voice_client, guild_id, channel), bot.loop)
 
     try:
         voice_client.play(source, after=after_play)
-        await channel.send(embed=discord.Embed(
+        asyncio.create_task(channel.send(embed=discord.Embed(
             title="Now Playing", 
             description=f"**{title}** (Index: {index}, Requested by {requester})", 
             color=discord.Color.blue()
-        ))
+        )))
     except Exception as e:
         logging.error(f"Voice client error for {title} (URL: {audio_url}): {str(e)}")
         await channel.send(embed=discord.Embed(
@@ -554,21 +479,8 @@ async def play_next_song(voice_client, guild_id, channel):
             description="Failed to play audio due to voice connection issue.",
             color=discord.Color.red()
         ))
-        asyncio.create_task(play_next_song(voice_client, guild_id, channel))
+        asyncio.run_coroutine_threadsafe(play_next_song(voice_client, guild_id, channel), bot.loop)
 
 # Run the bot
 
 bot.run(TOKEN)
-
-
-
-
-
-
-
-
-
-
-
-
-
