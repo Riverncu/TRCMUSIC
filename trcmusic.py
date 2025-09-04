@@ -310,6 +310,8 @@ async def stop(interaction: discord.Interaction):
     ))
 
 
+import yt_dlp
+
 @bot.tree.command(name="play", description="Play a song or playlist or add it to the queue")
 @app_commands.describe(query="Song name, YouTube URL, or playlist URL")
 async def play(interaction: discord.Interaction, query: str):
@@ -350,20 +352,20 @@ async def play(interaction: discord.Interaction, query: str):
 
     # Tối ưu ydl_options
     ydl_options = {
-        "format": "bestaudio[abr<=96]/bestaudio",  # Chọn bitrate thấp để nhanh
-        "extract_flat": True,  # Chỉ lấy metadata, không tải toàn bộ
+        "format": "bestaudio[abr<=96]/bestaudio",
+        "extract_flat": True,
         "noplaylist": False,
-        "default_search": "ytsearch1",  # Chỉ 1 kết quả
+        "default_search": "ytsearch1",
         "quiet": True,
         "no_warnings": True,
-        "socket_timeout": 5,  # Giảm timeout
+        "socket_timeout": 3,  # Giảm để nhanh hơn
         "retries": 2,
         "source_address": "0.0.0.0",
         "cookiefile": "cookies.txt",
         "extractor_args": {
             "youtube": {
                 "skip": ["dash", "hls", "thumbnails"],
-                "player_client": ["android"],  # Chỉ dùng android để nhanh hơn
+                "player_client": ["android"],
                 "lang": "en",
                 "max_results": 1,
             }
@@ -376,15 +378,16 @@ async def play(interaction: discord.Interaction, query: str):
             "Accept-Language": "en-US,en;q=0.5",
             "Referer": "https://www.youtube.com/",
         },
-        "max_downloads": 5,  # Giảm giới hạn playlist
-        "playlistend": 10,  # Chỉ lấy 10 bài đầu
-        "cachedir": False,  # Tắt cache để tránh xử lý dư thừa
+        "max_downloads": 5,
+        "playlistend": 10,
+        "cachedir": False,
     }
 
     # Search với timeout
     try:
-        search_task = asyncio.create_task(search_ytdlp_async(query, ydl_opts=ydl_options))
-        results = await asyncio.wait_for(search_task, timeout=6.0)  # Giảm timeout
+        with yt_dlp.YoutubeDL(ydl_options) as ydl:
+            search_task = asyncio.create_task(bot.loop.run_in_executor(None, lambda: ydl.extract_info(query, download=False)))
+            results = await asyncio.wait_for(search_task, timeout=5.0)
     except asyncio.TimeoutError:
         await processing_msg.edit(embed=discord.Embed(
             title="❌ Timeout",
@@ -419,16 +422,24 @@ async def play(interaction: discord.Interaction, query: str):
     added_songs = []
     BATCH_SIZE = 5
     
-    for i, track in enumerate(tracks):
+    for track in tracks:
         if not track:
             continue
             
-        audio_url = track.get("url", "")
+        # Lấy URL phát trực tiếp
+        try:
+            with yt_dlp.YoutubeDL(ydl_options) as ydl:
+                info = ydl.extract_info(track.get("url", track.get("id")), download=False)
+                audio_url = info.get("url", "")
+                title = info.get("title", "Untitled")
+                duration = info.get("duration", 0)
+        except Exception as e:
+            logging.error(f"Failed to extract URL for track {track.get('title', 'Unknown')}: {str(e)}")
+            continue
+            
         if not audio_url:
             continue
             
-        title = track.get("title", "Untitled")
-        duration = track.get("duration", 0)
         SONG_QUEUES[guild_id].append((audio_url, title, duration, interaction.user.name))
         added_songs.append(title)
         
@@ -578,6 +589,7 @@ async def play_next_song(voice_client, guild_id, channel):
 # Run the bot
 
 bot.run(TOKEN)
+
 
 
 
