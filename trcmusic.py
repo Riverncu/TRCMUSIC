@@ -311,6 +311,9 @@ async def stop(interaction: discord.Interaction):
 
 
 import yt_dlp
+import asyncio
+import logging
+from collections import deque
 
 @bot.tree.command(name="play", description="Play a song or playlist or add it to the queue")
 @app_commands.describe(query="Song name, YouTube URL, or playlist URL")
@@ -353,12 +356,12 @@ async def play(interaction: discord.Interaction, query: str):
     # Tối ưu ydl_options
     ydl_options = {
         "format": "bestaudio[abr<=96]/bestaudio",
-        "extract_flat": True,
+        "extract_flat": False,  # Tắt extract_flat để lấy đầy đủ URL
         "noplaylist": False,
         "default_search": "ytsearch1",
         "quiet": True,
         "no_warnings": True,
-        "socket_timeout": 3,  # Giảm để nhanh hơn
+        "socket_timeout": 2,
         "retries": 2,
         "source_address": "0.0.0.0",
         "cookiefile": "cookies.txt",
@@ -378,16 +381,17 @@ async def play(interaction: discord.Interaction, query: str):
             "Accept-Language": "en-US,en;q=0.5",
             "Referer": "https://www.youtube.com/",
         },
-        "max_downloads": 5,
-        "playlistend": 10,
+        "max_downloads": 3,
+        "playlistend": 5,
         "cachedir": False,
     }
 
     # Search với timeout
     try:
+        start_time = time.time()
         with yt_dlp.YoutubeDL(ydl_options) as ydl:
-            search_task = asyncio.create_task(bot.loop.run_in_executor(None, lambda: ydl.extract_info(query, download=False)))
-            results = await asyncio.wait_for(search_task, timeout=5.0)
+            results = await bot.loop.run_in_executor(None, lambda: ydl.extract_info(query, download=False))
+        logging.info(f"Search time for query '{query}': {time.time() - start_time:.2f}s")
     except asyncio.TimeoutError:
         await processing_msg.edit(embed=discord.Embed(
             title="❌ Timeout",
@@ -420,31 +424,25 @@ async def play(interaction: discord.Interaction, query: str):
         SONG_QUEUES[guild_id] = deque()
 
     added_songs = []
-    BATCH_SIZE = 5
+    BATCH_SIZE = 3
     
     for track in tracks:
         if not track:
             continue
             
-        # Lấy URL phát trực tiếp
-        try:
-            with yt_dlp.YoutubeDL(ydl_options) as ydl:
-                info = ydl.extract_info(track.get("url", track.get("id")), download=False)
-                audio_url = info.get("url", "")
-                title = info.get("title", "Untitled")
-                duration = info.get("duration", 0)
-        except Exception as e:
-            logging.error(f"Failed to extract URL for track {track.get('title', 'Unknown')}: {str(e)}")
-            continue
-            
+        audio_url = track.get("url", "")
+        title = track.get("title", "Untitled")
+        duration = track.get("duration", 0)
+        
         if not audio_url:
+            logging.warning(f"No valid URL for track {title}")
             continue
             
         SONG_QUEUES[guild_id].append((audio_url, title, duration, interaction.user.name))
         added_songs.append(title)
         
         # Update progress định kỳ
-        if len(added_songs) % BATCH_SIZE == 0 and len(added_songs) < 10:
+        if len(added_songs) % BATCH_SIZE == 0 and len(added_songs) < 5:
             try:
                 await processing_msg.edit(embed=discord.Embed(
                     title="📥 Processing...",
@@ -501,13 +499,7 @@ async def play_next_song(voice_client, guild_id, channel):
         return
 
     try:
-        song = SONG_QUEUES[guild_id].popleft()
-        if len(song) == 2:  # Xử lý tuple cũ
-            audio_url, title = song
-            duration = 0
-            requester = "Unknown"
-        else:  # Tuple 4 giá trị
-            audio_url, title, duration, requester = song
+        audio_url, title, duration, requester = SONG_QUEUES[guild_id].popleft()
         index = len(SONG_QUEUES[guild_id]) + 1
     except ValueError as e:
         logging.error(f"Error unpacking queue item in guild {guild_id}: {e}")
@@ -536,18 +528,13 @@ async def play_next_song(voice_client, guild_id, channel):
     elif loop_mode == "queue" and not SONG_QUEUES[guild_id]:
         SONG_QUEUES[guild_id].append((audio_url, title, duration, requester))
 
-    # ffmpeg_options = {
-    #     "before_options": "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 10 -timeout 10000000",
-    #     "options": "-vn -c:a libopus -b:a 96k -bufsize 96k",
-    # }
-
     ffmpeg_options = {
-    "before_options": "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 -timeout 30000000 -nostdin -loglevel warning",
-    "options": "-vn -c:a libopus -b:a 96k -bufsize 256k -frame_duration 60 -application voip -compression_level 5 -fflags +discardcorrupt"
+        "before_options": "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 -nostdin",
+        "options": "-vn -c:a libopus -b:a 96k",
     }
 
     try:
-        source = discord.FFmpegOpusAudio(audio_url, **ffmpeg_options)
+        source = discord.FFmpegOpusAudio(audio_url, **ffmpeg_options, executable="/usr/bin/ffmpeg")
     except Exception as e:
         logging.error(f"FFmpeg failed to create source for {title} (URL: {audio_url}): {str(e)}")
         await channel.send(embed=discord.Embed(
@@ -555,28 +542,28 @@ async def play_next_song(voice_client, guild_id, channel):
             description=f"Failed to play {title}: Invalid or inaccessible URL.",
             color=discord.Color.red()
         ))
-        asyncio.run_coroutine_threadsafe(play_next_song(voice_client, guild_id, channel), bot.loop)
+        asyncio.create_task(play_next_song(voice_client, guild_id, channel))
         return
 
     def after_play(error):
         if error:
             logging.error(f"Playback error for {title} (URL: {audio_url}): {str(error)}")
-            asyncio.run_coroutine_threadsafe(channel.send(embed=discord.Embed(
+            asyncio.create_task(channel.send(embed=discord.Embed(
                 title="Error",
                 description=f"Playback failed for {title}: {str(error)}",
                 color=discord.Color.red()
-            )), bot.loop)
+            )))
         else:
             logging.info(f"Finished playing {title} for guild {guild_id}")
-        asyncio.run_coroutine_threadsafe(play_next_song(voice_client, guild_id, channel), bot.loop)
+        asyncio.create_task(play_next_song(voice_client, guild_id, channel))
 
     try:
         voice_client.play(source, after=after_play)
-        asyncio.create_task(channel.send(embed=discord.Embed(
+        await channel.send(embed=discord.Embed(
             title="Now Playing", 
             description=f"**{title}** (Index: {index}, Requested by {requester})", 
             color=discord.Color.blue()
-        )))
+        ))
     except Exception as e:
         logging.error(f"Voice client error for {title} (URL: {audio_url}): {str(e)}")
         await channel.send(embed=discord.Embed(
@@ -584,11 +571,12 @@ async def play_next_song(voice_client, guild_id, channel):
             description="Failed to play audio due to voice connection issue.",
             color=discord.Color.red()
         ))
-        asyncio.run_coroutine_threadsafe(play_next_song(voice_client, guild_id, channel), bot.loop)
+        asyncio.create_task(play_next_song(voice_client, guild_id, channel))
 
 # Run the bot
 
 bot.run(TOKEN)
+
 
 
 
