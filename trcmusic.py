@@ -369,7 +369,6 @@ async def play(interaction: discord.Interaction, query: str):
             "youtube": {
                 "skip": ["dash", "hls", "thumbnails"],
                 "player_client": ["android"],
-                "lang": "en",
                 "max_results": 1,
             }
         },
@@ -576,6 +575,7 @@ async def play_next_song(voice_client, guild_id, channel):
 # Run the bot
 
 bot.run(TOKEN)
+
 
 
 
