@@ -308,20 +308,22 @@ async def stop(interaction: discord.Interaction):
         description="Stopped playback and disconnected!", 
         color=discord.Color.green()
     ))
+
+
 @bot.tree.command(name="play", description="Play a song or playlist or add it to the queue")
 @app_commands.describe(query="Song name, YouTube URL, or playlist URL")
 async def play(interaction: discord.Interaction, query: str):
-    # PHẢN HỒI NGAY LẬP TỨC - KHÔNG BLOCK
+    # Phản hồi ngay để tránh timeout
     await interaction.response.defer(thinking=True)
     
-    # GỬI THÔNG BÁO "ĐANG XỬ LÝ" NGAY LẬP TỨC
+    # Gửi thông báo "Đang tìm kiếm"
     processing_msg = await interaction.followup.send(embed=discord.Embed(
         title="🔍 Searching...",
         description="Please wait while I search for your song",
         color=discord.Color.blue()
     ))
 
-    # KIỂM TRA VOICE CHANNEL
+    # Kiểm tra voice channel
     if not interaction.user.voice or not interaction.user.voice.channel:
         await processing_msg.edit(embed=discord.Embed(
             title="Error", 
@@ -334,7 +336,6 @@ async def play(interaction: discord.Interaction, query: str):
     voice_client = interaction.guild.voice_client
     
     try:
-        # KẾT NỐI VOICE (NON-BLOCKING)
         if voice_client is None:
             voice_client = await voice_channel.connect()
         elif voice_channel != voice_client.channel:
@@ -347,53 +348,52 @@ async def play(interaction: discord.Interaction, query: str):
         ))
         return
 
-    # YDL OPTIONS TỐI ƯU
+    # Tối ưu ydl_options
     ydl_options = {
-        "format": "bestaudio[abr<=96]/bestaudio",
-        "extract_flat": False,
+        "format": "bestaudio[abr<=96]/bestaudio",  # Chọn bitrate thấp để nhanh
+        "extract_flat": True,  # Chỉ lấy metadata, không tải toàn bộ
         "noplaylist": False,
-        "default_search": "ytsearch1",
+        "default_search": "ytsearch1",  # Chỉ 1 kết quả
         "quiet": True,
         "no_warnings": True,
-        "socket_timeout": 8,
+        "socket_timeout": 5,  # Giảm timeout
         "retries": 2,
+        "source_address": "0.0.0.0",
+        "cookiefile": "cookies.txt",
         "extractor_args": {
             "youtube": {
                 "skip": ["dash", "hls", "thumbnails"],
-                "player_client": ["web"],
+                "player_client": ["android"],  # Chỉ dùng android để nhanh hơn
+                "lang": "en",
+                "max_results": 1,
             }
         },
-    # GIỚI HẠN DỮ LIỆU LẤY VỀ
-    "max_downloads": 10,  # Giới hạn playlist
-    "playlistend": 25,    # Chỉ lấy 25 bài đầu
-    
+        "force_ipv4": True,
+        "no_check_certificate": True,
         "http_headers": {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "User-Agent": "Mozilla/5.0 (Android 13; Mobile; rv:68.0) Gecko/68.0 Firefox/120.0",
             "Accept": "*/*",
             "Accept-Language": "en-US,en;q=0.5",
             "Referer": "https://www.youtube.com/",
         },
-        "force_ipv4": True,
-        "no_check_certificate": True,
-        "source_address": "0.0.0.0",
-        "cookiefile": "cookies.txt",
-        "postprocessor_args": ["-fflags", "+discardcorrupt"],
-        "compat_opts": ["seperate-video-versions", "no-youtube-unavailable-videos"]
+        "max_downloads": 5,  # Giảm giới hạn playlist
+        "playlistend": 10,  # Chỉ lấy 10 bài đầu
+        "cachedir": False,  # Tắt cache để tránh xử lý dư thừa
     }
 
-    # SEARCH TRONG BACKGROUND VỚI TIMEOUT
+    # Search với timeout
     try:
-        search_task = asyncio.create_task(search_ytdlp_async(query, ydl_options))
-        results = await asyncio.wait_for(search_task, timeout=12.0)
-        
+        search_task = asyncio.create_task(search_ytdlp_async(query, ydl_opts=ydl_options))
+        results = await asyncio.wait_for(search_task, timeout=6.0)  # Giảm timeout
     except asyncio.TimeoutError:
         await processing_msg.edit(embed=discord.Embed(
             title="❌ Timeout",
-            description="Search took too long. Please try again with a different query.",
+            description="Search took too long. Try a different query or check your connection.",
             color=discord.Color.red()
         ))
         return
     except Exception as e:
+        logging.error(f"Failed to fetch song for query '{query}': {str(e)}")
         await processing_msg.edit(embed=discord.Embed(
             title="Error", 
             description=f"Failed to fetch song: {str(e)}", 
@@ -401,7 +401,7 @@ async def play(interaction: discord.Interaction, query: str):
         ))
         return
 
-    # XỬ LÝ KẾT QUẢ
+    # Xử lý kết quả
     tracks = results.get("entries", []) if results.get("entries") else [results]
     
     if not tracks:
@@ -432,8 +432,8 @@ async def play(interaction: discord.Interaction, query: str):
         SONG_QUEUES[guild_id].append((audio_url, title, duration, interaction.user.name))
         added_songs.append(title)
         
-        # UPDATE PROGRESS ĐỊNH KỲ (NON-BLOCKING)
-        if len(added_songs) % BATCH_SIZE == 0 and len(added_songs) < 20:
+        # Update progress định kỳ
+        if len(added_songs) % BATCH_SIZE == 0 and len(added_songs) < 10:
             try:
                 await processing_msg.edit(embed=discord.Embed(
                     title="📥 Processing...",
@@ -441,7 +441,7 @@ async def play(interaction: discord.Interaction, query: str):
                     color=discord.Color.blue()
                 ))
             except:
-                pass  # Silent fail if message deleted
+                pass
 
     if not added_songs:
         await processing_msg.edit(embed=discord.Embed(
@@ -451,7 +451,7 @@ async def play(interaction: discord.Interaction, query: str):
         ))
         return
 
-    # GỬI KẾT QUẢ CUỐI CÙNG
+    # Gửi kết quả cuối
     if len(added_songs) == 1:
         message = f"✅ Added to queue: **{added_songs[0]}**"
     else:
@@ -469,7 +469,6 @@ async def play(interaction: discord.Interaction, query: str):
             description=f"🎵 Now playing: **{added_songs[0]}**", 
             color=discord.Color.green()
         ))
-        # CHẠY TRONG BACKGROUND ĐỂ KHÔNG BLOCK
         asyncio.create_task(play_next_song(voice_client, guild_id, interaction.channel))
 
 
@@ -579,6 +578,7 @@ async def play_next_song(voice_client, guild_id, channel):
 # Run the bot
 
 bot.run(TOKEN)
+
 
 
 
