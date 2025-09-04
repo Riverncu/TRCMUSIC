@@ -310,27 +310,15 @@ async def stop(interaction: discord.Interaction):
     ))
 
 
-import yt_dlp
-import asyncio
-import logging
-from collections import deque
-
 @bot.tree.command(name="play", description="Play a song or playlist or add it to the queue")
 @app_commands.describe(query="Song name, YouTube URL, or playlist URL")
 async def play(interaction: discord.Interaction, query: str):
     # Phản hồi ngay để tránh timeout
     await interaction.response.defer(thinking=True)
     
-    # Gửi thông báo "Đang tìm kiếm"
-    processing_msg = await interaction.followup.send(embed=discord.Embed(
-        title="🔍 Searching...",
-        description="Please wait while I search for your song",
-        color=discord.Color.blue()
-    ))
-
     # Kiểm tra voice channel
     if not interaction.user.voice or not interaction.user.voice.channel:
-        await processing_msg.edit(embed=discord.Embed(
+        await interaction.followup.send(embed=discord.Embed(
             title="Error", 
             description="You must be in a voice channel to use this command.", 
             color=discord.Color.red()
@@ -346,34 +334,38 @@ async def play(interaction: discord.Interaction, query: str):
         elif voice_channel != voice_client.channel:
             await voice_client.move_to(voice_channel)
     except Exception as e:
-        await processing_msg.edit(embed=discord.Embed(
+        await interaction.followup.send(embed=discord.Embed(
             title="Error", 
             description=f"Failed to connect to voice channel: {str(e)}", 
             color=discord.Color.red()
         ))
         return
 
+    # Gửi thông báo "Đang tìm kiếm"
+    processing_msg = await interaction.followup.send(embed=discord.Embed(
+        title="🔍 Searching...",
+        description="Please wait while I search for your song",
+        color=discord.Color.blue()
+    ))
+
     # Tối ưu ydl_options
     ydl_options = {
-        "format": "bestaudio[abr<=96]/bestaudio",
-        "extract_flat": False,  # Tắt extract_flat để lấy đầy đủ URL
+        "format": "bestaudio/best",
+        "extract_flat": False,
         "noplaylist": False,
         "default_search": "ytsearch1",
         "quiet": True,
         "no_warnings": True,
-        "socket_timeout": 2,
+        "socket_timeout": 1,
         "retries": 2,
-        "source_address": "0.0.0.0",
         "cookiefile": "cookies.txt",
         "extractor_args": {
             "youtube": {
-                "skip": ["dash", "hls", "thumbnails"],
                 "player_client": ["android"],
                 "max_results": 1,
             }
         },
         "force_ipv4": True,
-        "no_check_certificate": True,
         "http_headers": {
             "User-Agent": "Mozilla/5.0 (Android 13; Mobile; rv:68.0) Gecko/68.0 Firefox/120.0",
             "Accept": "*/*",
@@ -390,13 +382,6 @@ async def play(interaction: discord.Interaction, query: str):
         with yt_dlp.YoutubeDL(ydl_options) as ydl:
             results = await bot.loop.run_in_executor(None, lambda: ydl.extract_info(query, download=False))
         logging.info(f"Search time for query '{query}': {time.time() - start_time:.2f}s")
-    except asyncio.TimeoutError:
-        await processing_msg.edit(embed=discord.Embed(
-            title="❌ Timeout",
-            description="Search took too long. Try a different query or check your connection.",
-            color=discord.Color.red()
-        ))
-        return
     except Exception as e:
         logging.error(f"Failed to fetch song for query '{query}': {str(e)}")
         await processing_msg.edit(embed=discord.Embed(
@@ -428,14 +413,14 @@ async def play(interaction: discord.Interaction, query: str):
         if not track:
             continue
             
-        audio_url = track.get("url", "")
+        audio_url = track.get("url") or track.get("webpage_url")
+        if not audio_url:
+            logging.warning(f"No valid URL for track {track.get('title', 'Unknown')}")
+            continue
+            
         title = track.get("title", "Untitled")
         duration = track.get("duration", 0)
         
-        if not audio_url:
-            logging.warning(f"No valid URL for track {title}")
-            continue
-            
         SONG_QUEUES[guild_id].append((audio_url, title, duration, interaction.user.name))
         added_songs.append(title)
         
@@ -574,6 +559,7 @@ async def play_next_song(voice_client, guild_id, channel):
 # Run the bot
 
 bot.run(TOKEN)
+
 
 
 
