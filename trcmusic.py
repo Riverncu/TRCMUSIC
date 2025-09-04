@@ -299,26 +299,65 @@ async def play(interaction: discord.Interaction, query: str):
     elif voice_channel != voice_client.channel:
         await voice_client.move_to(voice_channel)
 
-    # CẤU HÌNH YT-DLP ĐÃ SỬA
+    
     ydl_options = {
-    "format": "bestaudio/best",
+    # Ưu tiên format nhẹ, tương thích với Discord
+    "format": "bestaudio[abr<=96]/bestaudio[abr<=128]/bestaudio",
+    
+    # Tìm kiếm và playlist
+    "default_search": "ytsearch1",
     "noplaylist": False,
-    "default_search": "ytsearch",
+    "extract_flat": False,  # QUAN TRỌNG: Lấy đầy đủ thông tin
+    
+    # Timeout và retry
+    "socket_timeout": 10,    # Timeout hợp lý cho Render
+    "retries": 3,
+    
+    # Hiệu suất
     "quiet": True,
     "no_warnings": True,
-    "socket_timeout": 3,
-    "retries": 3,
-    "source_address": "0.0.0.0",
-    "cookiefile": "cookies.txt",  # Thêm dòng này
+    "no_color": True,
+    "simulate": True,       # Không tải video, chỉ lấy metadata
+    "skip_download": True,  # Không tải video
+    
+    # YouTube-specific optimizations
     "extractor_args": {
         "youtube": {
-            "skip": ["dash", "hls"],
-            "player_client": ["android", "web"],
+            "skip": ["dash", "hls"],  # Bỏ qua định dạng không tương thích
+            "player_client": ["android", "web"]
         }
     },
-    "force_ipv4": True,
-    "no_check_certificate": True,
+    
+    # Headers để tránh bị block
+    "http_headers": {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-us,en;q=0.5",
+        "Accept-Encoding": "gzip,deflate",
+        "Accept-Charset": "ISO-8859-1,utf-8;q=0.7,*;q=0.7",
+        "Connection": "keep-alive"
+    }
 }
+#     # CẤU HÌNH YT-DLP ĐÃ SỬA
+#     ydl_options = {
+#     "format": "bestaudio/best",
+#     "noplaylist": False,
+#     "default_search": "ytsearch",
+#     "quiet": True,
+#     "no_warnings": True,
+#     "socket_timeout": 3,
+#     "retries": 3,
+#     "source_address": "0.0.0.0",
+#     "cookiefile": "cookies.txt",  # Thêm dòng này
+#     "extractor_args": {
+#         "youtube": {
+#             "skip": ["dash", "hls"],
+#             "player_client": ["android", "web"],
+#         }
+#     },
+#     "force_ipv4": True,
+#     "no_check_certificate": True,
+# }
 
     try:
         results = await search_ytdlp_async(query, ydl_opts=ydl_options)
@@ -433,9 +472,14 @@ async def play_next_song(voice_client, guild_id, channel):
     elif loop_mode == "queue" and not SONG_QUEUES[guild_id]:
         SONG_QUEUES[guild_id].append((audio_url, title, duration, requester))
 
+    # ffmpeg_options = {
+    #     "before_options": "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 10 -timeout 10000000",
+    #     "options": "-vn -c:a libopus -b:a 96k -bufsize 96k",
+    # }
+
     ffmpeg_options = {
-        "before_options": "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 10 -timeout 10000000",
-        "options": "-vn -c:a libopus -b:a 96k -bufsize 96k",
+    "before_options": "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 2 -timeout 5000000 -nostdin",
+    "options": "-vn -c:a libopus -b:a 96k -bufsize 192k -frame_duration 60 -application voip"
     }
 
     try:
@@ -481,6 +525,7 @@ async def play_next_song(voice_client, guild_id, channel):
 # Run the bot
 
 bot.run(TOKEN)
+
 
 
 
