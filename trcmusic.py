@@ -377,7 +377,6 @@ async def play(interaction: discord.Interaction, query: str):
         "http_headers": {
             "User-Agent": "Mozilla/5.0 (Android 13; Mobile; rv:68.0) Gecko/68.0 Firefox/120.0",
             "Accept": "*/*",
-            "Accept-Language": "en-US,en;q=0.5",
             "Referer": "https://www.youtube.com/",
         },
         "max_downloads": 3,
@@ -575,6 +574,7 @@ async def play_next_song(voice_client, guild_id, channel):
 # Run the bot
 
 bot.run(TOKEN)
+
 
 
 
