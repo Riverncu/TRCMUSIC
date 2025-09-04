@@ -299,45 +299,51 @@ async def play(interaction: discord.Interaction, query: str):
     elif voice_channel != voice_client.channel:
         await voice_client.move_to(voice_channel)
 
-    
     ydl_options = {
-    # Ưu tiên format nhẹ, tương thích với Discord
-    "format": "bestaudio[abr<=96]/bestaudio[abr<=128]/bestaudio",
-    
-    # Tìm kiếm và playlist
-    "default_search": "ytsearch1",
+    "format": "bestaudio[abr<=96]/bestaudio",
+    "extract_flat": False,
     "noplaylist": False,
-    "extract_flat": False,  # QUAN TRỌNG: Lấy đầy đủ thông tin
-    
-    # Timeout và retry
-    "socket_timeout": 10,    # Timeout hợp lý cho Render
-    "retries": 3,
-    
-    # Hiệu suất
+    "default_search": "ytsearch1",
     "quiet": True,
     "no_warnings": True,
-    "no_color": True,
-    "simulate": True,       # Không tải video, chỉ lấy metadata
-    "skip_download": True,  # Không tải video
+    "socket_timeout": 15,
+    "retries": 5,
     
-    # YouTube-specific optimizations
+    # QUAN TRỌNG: Thêm các option chống chặn
     "extractor_args": {
         "youtube": {
-            "skip": ["dash", "hls"],  # Bỏ qua định dạng không tương thích
-            "player_client": ["android", "web"]
+            "skip": ["dash", "hls"],
+            "player_client": ["android", "web"],
+            "player_skip": ["config", "webpage"]
         }
     },
     
-    # Headers để tránh bị block
+    # HEADERS QUAN TRỌNG để tránh bị block
     "http_headers": {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language": "en-us,en;q=0.5",
-        "Accept-Encoding": "gzip,deflate",
-        "Accept-Charset": "ISO-8859-1,utf-8;q=0.7,*;q=0.7",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9,vi;q=0.8",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Referer": "https://www.youtube.com/",
+        "Origin": "https://www.youtube.com",
         "Connection": "keep-alive"
-    }
+    },
+    
+    # QUAN TRỌNG: Force IPv4 và xử lý certificate
+    "force_ipv4": True,
+    "no_check_certificate": True,
+    "source_address": "0.0.0.0",
+    
+    # Cookies để tăng độ tin cậy
+    "cookiefile": "cookies.txt",
+    
+    # Thêm các option extractor quan trọng
+    "postprocessor_args": ["-fflags", "+discardcorrupt"],
+    "compat_opts": ["seperate-video-versions", "no-youtube-unavailable-videos"]
 }
+
+
+    
 #     # CẤU HÌNH YT-DLP ĐÃ SỬA
 #     ydl_options = {
 #     "format": "bestaudio/best",
@@ -525,6 +531,7 @@ async def play_next_song(voice_client, guild_id, channel):
 # Run the bot
 
 bot.run(TOKEN)
+
 
 
 
