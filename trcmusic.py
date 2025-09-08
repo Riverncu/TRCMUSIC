@@ -281,8 +281,7 @@ async def stop(interaction: discord.Interaction):
 @bot.tree.command(name="play", description="Play a song or playlist or add it to the queue")
 @app_commands.describe(query="Song name, YouTube URL, or playlist URL")
 async def play(interaction: discord.Interaction, query: str):
-    # Phản hồi ngay để tránh timeout
-    await interaction.response.send_message("🔄 Đang xử lý...", ephemeral=True)
+    await interaction.response.defer(thinking=True)
 
     if interaction.user.voice is None:
         await interaction.followup.send(embed=discord.Embed(
@@ -300,40 +299,49 @@ async def play(interaction: discord.Interaction, query: str):
         await voice_client.move_to(voice_channel)
 
     ydl_options = {
-        "format": "bestaudio/best",
-        "noplaylist": False,
-        "default_search": "ytsearch",
-        "quiet": True,
-        "no_warnings": True,
-        "socket_timeout": 3,
-        "retries": 3,
-        "source_address": "0.0.0.0",
-        "cookiefile": "cookies.txt",  # Thêm cookies
-        "extractor_args": {
-            "youtube": {
-                "skip": ["dash", "hls"],
-                "player_client": ["android", "web"],
-            }
-        },
-        "force_ipv4": True,
-        "no_check_certificate": True,
-    }
+    "format": "bestaudio/best",
+    "outtmpl": "%(extractor)s-%(id)s-%(title)s.%(ext)s",
+    "restrictfilenames": True,
+    "noplaylist": False,
+    "default_search": "ytsearch1",
+    "quiet": True,
+    "no_warnings": True,
+    "socket_timeout": 10,
+    "retries": 2,
+    
+    # QUAN TRỌNG: Thêm postprocessor để extract audio
+    "postprocessors": [{
+        "key": "FFmpegExtractAudio",
+        "preferredcodec": "mp3",
+        "preferredquality": "192",
+    }],
+    
+    "http_headers": {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Accept": "*/*",
+        "Referer": "https://www.youtube.com/",
+    },
+    "force_ipv4": True,
+    "no_check_certificate": True,
+    "source_address": "0.0.0.0",
+    "cookiefile": "cookies.txt",
+}
 
     try:
         start_time = time.time()
         results = await search_ytdlp_async(query, ydl_opts=ydl_options)
         logging.info(f"Search time for query '{query}': {time.time() - start_time:.2f}s")
+        logging.debug(f"Raw yt_dlp results: {results}")
         tracks = results.get("entries", []) if results.get("entries") else [results]
     except Exception as e:
         logging.error(f"Failed to fetch song for query '{query}': {str(e)}")
         await interaction.followup.send(embed=discord.Embed(
             title="Error", 
-            description=f"Failed to fetch song: {str(e)}", 
+            description=f"Failed to fetch song: {str(e)}. Try using a VPN or a different query.", 
             color=discord.Color.red()
         ))
         return
 
-    # Phần còn lại giữ nguyên
     if not tracks:
         await interaction.followup.send(embed=discord.Embed(
             title="Error", 
@@ -350,35 +358,37 @@ async def play(interaction: discord.Interaction, query: str):
     for track in tracks:
         audio_url = track.get("url", "")
         if not audio_url:
+            logging.warning(f"No valid URL for track: {track.get('title', 'Unknown')}")
             continue
         title = track.get("title", "Untitled")
         duration = track.get("duration", 0)
         SONG_QUEUES[guild_id].append((audio_url, title, duration, interaction.user.name))
         added_songs.append(title)
+    logging.info(f"Added songs to queue for guild {guild_id}: {added_songs}")
 
     if not added_songs:
         await interaction.followup.send(embed=discord.Embed(
             title="Error", 
-            description="No valid songs could be added.", 
+            description="No valid songs could be added to the queue. Try a different query or check your network.", 
             color=discord.Color.red()
         ))
         return
 
     if len(added_songs) == 1:
-        message = f"✅ Added to queue: **{added_songs[0]}**"
+        message = f"Added to queue: **{added_songs[0]}**"
     else:
-        message = f"✅ Added {len(added_songs)} songs to queue."
+        message = f"Added {len(added_songs)} songs to queue from playlist."
 
     if voice_client.is_playing() or voice_client.is_paused():
         await interaction.followup.send(embed=discord.Embed(
-            title="Success", 
+            title="Added", 
             description=message, 
             color=discord.Color.green()
         ))
     else:
         await interaction.followup.send(embed=discord.Embed(
-            title="Now Playing", 
-            description=f"🎵 Now playing: **{added_songs[0]}**", 
+            title="Playing", 
+            description=f"Now playing: **{added_songs[0]}**", 
             color=discord.Color.green()
         ))
         await play_next_song(voice_client, guild_id, interaction.channel)
@@ -482,5 +492,4 @@ async def play_next_song(voice_client, guild_id, channel):
         asyncio.run_coroutine_threadsafe(play_next_song(voice_client, guild_id, channel), bot.loop)
 
 # Run the bot
-
 bot.run(TOKEN)
