@@ -309,12 +309,12 @@ async def play(interaction: discord.Interaction, query: str):
         "default_search": "ytsearch1",
         "quiet": True,
         "no_warnings": True,
-        "socket_timeout": 15,
-        "retries": 5,
-        "extractor_retries": 5,
-        "fragment_retries": 3,
-        "sleep_interval": 1,
-        "max_sleep_interval": 5,
+        "socket_timeout": 8,
+        "retries": 2,
+        "extractor_retries": 2,
+        "fragment_retries": 2,
+        "sleep_interval": 0.5,
+        "max_sleep_interval": 2,
         "postprocessors": [{
             "key": "FFmpegExtractAudio",
             "preferredcodec": "mp3",
@@ -330,12 +330,11 @@ async def play(interaction: discord.Interaction, query: str):
         "source_address": "0.0.0.0",
         "cookiefile": "cookies.txt",
         "extract_flat": "in_playlist",
-        "verbose": True,
+        "cachedir": "/tmp/yt_dlp_cache",
+        "force_generic_extractor": True,
         "geo_bypass": True,
+        "nocheckcertificate": True,
     }
-
-    proxy = os.getenv('YTDLP_PROXY', 'socks5://172.20.10.1:1082')
-    ydl_options['proxy'] = proxy
 
     try:
         start_time = time.time()
@@ -347,7 +346,7 @@ async def play(interaction: discord.Interaction, query: str):
         logging.error(f"Failed to fetch song for query '{query}': {str(e)}")
         await interaction.followup.send(embed=discord.Embed(
             title="Error", 
-            description=f"Failed to fetch song: {str(e)}. Check cookies or proxy.", 
+            description=f"Failed to fetch song: {str(e)}. Check cookies or network.", 
             color=discord.Color.red()
         ))
         return
