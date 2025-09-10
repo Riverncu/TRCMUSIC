@@ -305,7 +305,7 @@ async def play(interaction: discord.Interaction, query: str):
         "format": "bestaudio/best",
         "outtmpl": "%(extractor)s-%(id)s-%(title)s.%(ext)s",
         "restrictfilenames": True,
-        "noplaylist": False,
+        "noplaylist": True,
         "default_search": "ytsearch1",
         "quiet": True,
         "no_warnings": True,
@@ -315,11 +315,11 @@ async def play(interaction: discord.Interaction, query: str):
         "fragment_retries": 2,
         "sleep_interval": 0.5,
         "max_sleep_interval": 2,
-        "postprocessors": [{
-            "key": "FFmpegExtractAudio",
-            "preferredcodec": "mp3",
-            "preferredquality": "192",
-        }],
+        # "postprocessors": [{
+        #     "key": "FFmpegExtractAudio",
+        #     "preferredcodec": "mp3",
+        #     "preferredquality": "192",
+        # }],
         "http_headers": {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             "Accept": "*/*",
@@ -456,8 +456,8 @@ async def play_next_song(voice_client, guild_id, channel):
         SONG_QUEUES[guild_id].append((audio_url, title, duration, requester))
 
     ffmpeg_options = {
-        "before_options": "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 10 -timeout 10000000",
-        "options": "-vn -c:a libopus -b:a 96k -bufsize 96k",
+    "before_options": "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 -nostdin",
+    "options": "-vn -c:a libopus -b:a 96k -bufsize 64k -frame_duration 20 -application lowdelay",
     }
 
     try:
@@ -501,3 +501,4 @@ async def play_next_song(voice_client, guild_id, channel):
         asyncio.run_coroutine_threadsafe(play_next_song(voice_client, guild_id, channel), bot.loop)
 
 bot.run(TOKEN)
+
