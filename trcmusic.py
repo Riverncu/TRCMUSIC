@@ -81,6 +81,62 @@ def _extract(query, ydl_opts):
             logging.error(f"yt-dlp extraction failed: {e}")
             raise
 
+# === NEW: helper resolve URL stream trực tiếp cho 1 entry (kể cả kênh/playlist/flat) ===
+async def resolve_stream_url_async(entry):
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, lambda: _resolve_stream_url(entry))
+
+def _resolve_stream_url(entry):
+    """
+    Trả về tuple (stream_url, title, duration) đã được yt_dlp resolve thành URL audio trực tiếp.
+    Nếu entry là kênh/playlist/flat entry -> re-extract bằng extract_flat=False để lấy formats thật.
+    """
+    target = entry.get("webpage_url") or entry.get("url")
+    if not target:
+        return None
+
+    # Tạo bản sao option: ép extract chi tiết, không dùng generic extractor
+    local_opts = dict(ydl_options)
+    local_opts.update({
+        "extract_flat": False,            # cần full info + formats
+        "noplaylist": True,               # chỉ lấy 1 video
+        "quiet": True,
+        "force_generic_extractor": False, # dùng extractor gốc YouTube
+    })
+
+    try:
+        with yt_dlp.YoutubeDL(local_opts) as ydl:
+            info = ydl.extract_info(target, download=False)
+    except Exception as e:
+        logging.error(f"Resolve stream failed for target={target}: {e}")
+        return None
+
+    # Nếu là list/playlist/channel -> chọn phần tử đầu là video và re-extract nếu cần
+    if isinstance(info, dict) and "entries" in info and info["entries"]:
+        for e in info["entries"]:
+            if not e:
+                continue
+            # Nếu phần tử vẫn là flat, re-extract qua webpage_url để có stream URL
+            sub_target = e.get("webpage_url") or e.get("url")
+            if not sub_target:
+                continue
+            try:
+                with yt_dlp.YoutubeDL(local_opts) as ydl2:
+                    e2 = ydl2.extract_info(sub_target, download=False)
+                    if e2 and e2.get("url"):
+                        return (e2["url"], e2.get("title", "Untitled"), e2.get("duration", 0))
+            except Exception as ex2:
+                logging.warning(f"Second-stage resolve failed: {ex2}")
+                continue
+        return None
+
+    # Trường hợp single video đã có stream URL
+    if info and info.get("url"):
+        return (info["url"], info.get("title", "Untitled"), info.get("duration", 0))
+
+    return None
+# === END NEW ===
+
 intents = discord.Intents.default()
 intents.message_content = True
 
@@ -374,20 +430,20 @@ async def play(interaction: discord.Interaction, query: str):
     for track in tracks:
         if not track:
             continue
-            
-        # Get the direct audio URL
-        audio_url = track.get('url')
-        if not audio_url:
-            # Fallback to webpage URL if direct URL not available
-            audio_url = track.get('webpage_url')
-            if not audio_url:
-                logging.warning(f"No valid URL for track: {track.get('title', 'Unknown')}")
-                continue
-                
-        title = track.get("title", "Untitled")
-        duration = track.get("duration", 0)
+
+        # === CHANGED: luôn resolve thành stream URL trực tiếp trước khi enqueue ===
+        resolved = await resolve_stream_url_async(track)
+        if not resolved:
+            logging.warning(f"Cannot resolve playable stream for: {track.get('title', 'Unknown')}")
+            continue
+
+        audio_url, fixed_title, fixed_duration = resolved
+        title = fixed_title or track.get("title", "Untitled")
+        duration = fixed_duration if fixed_duration is not None else track.get("duration", 0)
+
         SONG_QUEUES[guild_id].append((audio_url, title, duration, interaction.user.name))
         added_songs.append(title)
+    # === END CHANGED ===
         
     logging.info(f"Added songs to queue for guild {guild_id}: {added_songs}")
 
