@@ -54,6 +54,8 @@ ydl_options = {
     "force_generic_extractor": True,
     "geo_bypass": True,
     "nocheckcertificate": True,
+    # (tuỳ chọn) giúp yt-dlp đổi client khi cần
+    # "extractor_args": {"youtube": {"player_client": ["web","android","ios"]}},
 }
 
 ffmpeg_options = {
@@ -61,20 +63,36 @@ ffmpeg_options = {
     "options": "-vn -c:a libopus -b:a 96k -bufsize 64k -frame_duration 20 -application lowdelay",
 }
 
+# === NEW: helper gắn cookies vào ydl options (dùng chung cho search & resolve) ===
+def prepare_ydl_opts(base_opts: dict) -> dict:
+    opts = dict(base_opts)  # copy để không đụng bản gốc
+    cookies_path = Path(opts.get("cookiefile", "cookies.txt"))
+    cookies_b64 = os.getenv("YTDLP_COOKIES")
+
+    if cookies_b64:
+        try:
+            cookies_path.write_bytes(base64.b64decode(cookies_b64))
+            opts["cookiefile"] = str(cookies_path)
+            logging.info(f"Loaded cookies from env to {cookies_path}")
+        except Exception as e:
+            logging.warning(f"Failed to write cookies from env: {e}")
+    elif cookies_path.exists():
+        opts["cookiefile"] = str(cookies_path)
+        logging.info(f"Using existing cookies file at {cookies_path}")
+    else:
+        logging.warning("Cookies file not found and YTDLP_COOKIES is empty. YouTube may require login.")
+
+    return opts
+# === END NEW ===
+
 async def search_ytdlp_async(query, ydl_opts):
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, lambda: _extract(query, ydl_opts))
 
 def _extract(query, ydl_opts):
-    cookies_path = Path(ydl_opts.get("cookiefile", "cookies.txt"))
-    cookies_b64 = os.getenv('YTDLP_COOKIES')
-    if cookies_b64:
-        cookies_path.write_bytes(base64.b64decode(cookies_b64))
-        ydl_opts['cookiefile'] = str(cookies_path)
-    elif not cookies_path.exists():
-        logging.warning("Cookies file not found. Proceeding without cookies...")
-
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+    # === CHANGED: dùng helper cookies chung ===
+    opts = prepare_ydl_opts(ydl_opts)
+    with yt_dlp.YoutubeDL(opts) as ydl:
         try:
             return ydl.extract_info(query, download=False)
         except Exception as e:
@@ -95,7 +113,6 @@ def _resolve_stream_url(entry):
     if not target:
         return None
 
-    # Tạo bản sao option: ép extract chi tiết, không dùng generic extractor
     local_opts = dict(ydl_options)
     local_opts.update({
         "extract_flat": False,            # cần full info + formats
@@ -103,6 +120,8 @@ def _resolve_stream_url(entry):
         "quiet": True,
         "force_generic_extractor": False, # dùng extractor gốc YouTube
     })
+    # === CHANGED: gắn cookies trước khi gọi yt-dlp ===
+    local_opts = prepare_ydl_opts(local_opts)
 
     try:
         with yt_dlp.YoutubeDL(local_opts) as ydl:
@@ -116,7 +135,6 @@ def _resolve_stream_url(entry):
         for e in info["entries"]:
             if not e:
                 continue
-            # Nếu phần tử vẫn là flat, re-extract qua webpage_url để có stream URL
             sub_target = e.get("webpage_url") or e.get("url")
             if not sub_target:
                 continue
@@ -431,7 +449,7 @@ async def play(interaction: discord.Interaction, query: str):
         if not track:
             continue
 
-        # === CHANGED: luôn resolve thành stream URL trực tiếp trước khi enqueue ===
+        # === CHANGED: luôn resolve thành stream URL trực tiếp trước khi enqueue (có cookies) ===
         resolved = await resolve_stream_url_async(track)
         if not resolved:
             logging.warning(f"Cannot resolve playable stream for: {track.get('title', 'Unknown')}")
